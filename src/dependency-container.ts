@@ -13,6 +13,7 @@ import {
   isValueProvider
 } from "./providers";
 import {RegistrationOptions, constructor} from "./types";
+import {getParamInfo} from "./reflection-helpers";
 
 type Registration<T = any> = {
   provider: Provider<T>;
@@ -23,6 +24,7 @@ type Registration<T = any> = {
 /** Dependency Container */
 export class DependencyContainer implements Types.DependencyContainer {
   private _registry = new Map<InjectionToken<any>, Registration>();
+  private _scopes = new Map<InjectionToken<any>, DependencyContainer>();
 
   public constructor(private parent?: DependencyContainer) { }
 
@@ -40,6 +42,10 @@ export class DependencyContainer implements Types.DependencyContainer {
       if (isValueProvider(provider) || isFactoryProvider(provider)) {
         throw "Cannot use {singleton: true} with ValueProviders or FactoryProviders";
       }
+    }
+
+    if (options.registrations) {
+      this.registerScope(token, options.registrations);
     }
 
     this._registry.set(token, {provider, options});
@@ -94,7 +100,8 @@ export class DependencyContainer implements Types.DependencyContainer {
    * @return {T} An instance of the dependency
    */
   public resolve<T>(token: InjectionToken<T>): T {
-    const registration = this.getRegistration(token);
+    const scope = this._scopes.has(token) ? this._scopes.get(token)! : this;
+    const registration = scope.getRegistration(token);
 
     if (!registration) {
       if (isNormalToken(token)) {
@@ -107,21 +114,21 @@ export class DependencyContainer implements Types.DependencyContainer {
         return registration.provider.useValue;
       } else if (isTokenProvider(registration.provider)) {
         return registration.options.singleton ?
-          (registration.instance || (registration.instance = this.resolve(registration.provider.useToken))) :
-          this.resolve(registration.provider.useToken);
+          (registration.instance || (registration.instance = scope.resolve(registration.provider.useToken))) :
+          scope.resolve(registration.provider.useToken);
       } else if (isClassProvider(registration.provider)) {
         return registration.options.singleton ?
-          (registration.instance || (registration.instance = this.construct(registration.provider.useClass))) :
-          this.construct(registration.provider.useClass);
+          (registration.instance || (registration.instance = scope.construct(registration.provider.useClass))) :
+          scope.construct(registration.provider.useClass);
       } else if (isFactoryProvider(registration.provider)) {
-        return registration.provider.useFactory(this);
+        return registration.provider.useFactory(scope);
       } else {
-        return this.construct(registration.provider);
+        return scope.construct(registration.provider);
       }
     }
 
     // No registration for this token, but since it's a constructor, return an instance
-    return this.construct(<constructor<T>>token);
+    return scope.construct(<constructor<T>>token);
   }
 
   /**
@@ -138,10 +145,56 @@ export class DependencyContainer implements Types.DependencyContainer {
    */
   public reset(): void {
     this._registry.clear();
+    this._scopes.clear();
   }
 
   public createChildContainer(): Types.DependencyContainer {
     return new DependencyContainer(this);
+  }
+
+  public injectable = <T, R extends T = T>(options?: { token?: InjectionToken<T>, registrations?: Types.ProviderRegistration[] }) => (target: constructor<R>): void => {
+    typeInfo.set(target, getParamInfo(target));
+
+    if (options && options.token) {
+      this.register(options.token, {useClass: target});
+    }
+
+    if (options && options.registrations) {
+      this.registerScope(target, options.registrations);
+    }
+  }
+
+  public singleton = <T, R extends T = T>(options?: { token?: InjectionToken<T>, registrations?: Types.ProviderRegistration[] }) => (target: constructor<R>): void => {
+    this.injectable(options)(target);
+    this.registerSingleton(target);
+  }
+
+  public autoInjectable = (registrations?: Types.ProviderRegistration[]) => (target: constructor<any>): constructor<any> => {
+    const paramInfo = getParamInfo(target);
+    const container = registrations ? this.registerScope(target, registrations) : this;
+
+    return class extends target {
+      constructor(...args: any[]) {
+        super(...args.concat(paramInfo.slice(args.length).map((type, index) => {
+          try {
+            return container.resolve(type);
+          } catch (e) {
+            const argIndex = index + args.length;
+
+            const [, params = null] = target.toString().match(/constructor\(([\w, ]+)\)/) || [];
+            const argName = params ? params.split(",")[argIndex] : `#${argIndex}`;
+
+            throw `Cannot inject the dependency ${argName} of ${target.name} constructor. ${e}`;
+          }
+        })));
+      }
+    };
+  }
+
+  public registry = (registrations: Types.ProviderRegistration[] = []) => (target: any): any => {
+    registrations.forEach(({token, options, ...provider}) => this.register(token, <any>provider, options));
+
+    return target;
   }
 
   private getRegistration<T>(token: InjectionToken<T>): Registration | null {
@@ -170,6 +223,19 @@ export class DependencyContainer implements Types.DependencyContainer {
     const params = paramInfo.map(param => this.resolve(param));
 
     return new ctor(...params);
+  }
+
+  private registerScope<T>(token: InjectionToken<T>, registrations: Types.ProviderRegistration[]): DependencyContainer {
+    let scope: DependencyContainer | undefined = this._scopes.get(token);
+
+    if (!scope) {
+      scope = this.createChildContainer() as DependencyContainer;
+      this._scopes.set(token, scope);
+    }
+
+    registrations.forEach(({token, options, ...provider}) => scope!.register(token, <any>provider, options));
+
+    return scope;
   }
 }
 

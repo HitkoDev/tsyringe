@@ -1,7 +1,6 @@
-import {INJECTION_TOKEN_METADATA_KEY, getParamInfo} from "./reflection-helpers";
-import {InjectionToken, Provider} from "./providers";
-import {RegistrationOptions, constructor} from "./types";
-import {instance as globalContainer, typeInfo} from "./dependency-container";
+import {INJECTION_TOKEN_METADATA_KEY} from "./reflection-helpers";
+import {InjectionToken} from "./providers";
+import {instance as globalContainer} from "./dependency-container";
 
 /**
  * Class decorator factory that allows the class' dependencies to be injected
@@ -9,11 +8,7 @@ import {instance as globalContainer, typeInfo} from "./dependency-container";
  *
  * @return {Function} The class decorator
  */
-export function injectable<T>(): (target: constructor<T>) => void {
-  return function(target: constructor<T>): void {
-    typeInfo.set(target, getParamInfo(target));
-  };
-}
+export const injectable = globalContainer.injectable;
 
 /**
  * Class decorator factory that registers the class as a singleton within
@@ -21,12 +16,7 @@ export function injectable<T>(): (target: constructor<T>) => void {
  *
  * @return {Function} The class decorator
  */
-export function singleton<T>(): (target: constructor<T>) => void {
-  return function(target: constructor<T>): void {
-    injectable()(target);
-    globalContainer.registerSingleton(target);
-  };
-}
+export const singleton = globalContainer.singleton;
 
 /**
  * Class decorator factory that replaces the decorated class' constructor with
@@ -36,28 +26,7 @@ export function singleton<T>(): (target: constructor<T>) => void {
  *
  * @return {Function} The class decorator
  */
-export function autoInjectable(): (target: constructor<any>) => any {
-  return function(target: constructor<any>): constructor<any> {
-    const paramInfo = getParamInfo(target);
-
-    return class extends target {
-      constructor(...args: any[]) {
-        super(...args.concat(paramInfo.slice(args.length).map((type, index) => {
-          try {
-            return globalContainer.resolve(type);
-          } catch (e) {
-            const argIndex = index + args.length;
-
-            const [, params = null] = target.toString().match(/constructor\(([\w, ]+)\)/) || [];
-            const argName = params ? params.split(",")[argIndex] : `#${argIndex}`;
-
-            throw `Cannot inject the dependency ${argName} of ${target.name} constructor. ${e}`;
-          }
-        })));
-      }
-    };
-  };
-}
+export const autoInjectable = globalContainer.autoInjectable;
 
 /**
  * Parameter decorator factory that allows for interface information to be stored in the constructor's metadata
@@ -77,10 +46,4 @@ export function inject(token: InjectionToken<any>): (target: any, propertyKey: s
  *
  * @return {Function} The class decorator
  */
-export function registry(registrations: ({ token: InjectionToken, options?: RegistrationOptions } & Provider<any>)[] = []): (target: any) => any {
-  return function(target: any): any {
-    registrations.forEach(({token, options, ...provider}) => globalContainer.register(token, <any>provider, options));
-
-    return target;
-  };
-}
+export const registry = globalContainer.registry;
