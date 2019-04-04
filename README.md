@@ -201,6 +201,53 @@ const client = container.resolve(Client);
 // client's dependencies will have been resolved
 ```
 
+### Example with scopes
+```typescript
+// SuperService.ts
+import {injectable} from "tsyringe";
+
+@injectable()
+export class SuperService {
+  // ...
+}
+```
+```typescript
+// TestScope.ts
+import {container} from "tsyringe";
+
+export const testScope = container.createChildContainer();
+```
+```typescript
+// TestService.ts
+import {SuperService} from "./SuperService";
+import {testScope} from "./TestScope";
+
+// TestService provides SuperService functionality within testScope
+@testScope.injectable({token: SuperService})
+export class TestService implements SuperService {
+  //...
+}
+```
+```typescript
+// Client.ts
+import {injectable} from "tsyringe";
+
+@injectable()
+export class Client {
+  constructor(private service: SuperService) {}
+}
+```
+```typescript
+// test.ts
+import "reflect-metadata";
+import "./TestService";
+import {Client} from "./Client";
+import {testScope} from "./TestScope";
+
+const client = testScope.resolve(Client);
+// client.service will have been resolved to TestService
+```
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
